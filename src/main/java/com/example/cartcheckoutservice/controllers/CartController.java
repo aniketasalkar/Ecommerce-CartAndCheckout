@@ -77,7 +77,7 @@ public class CartController {
         CartResponseDto cartResponseDto = new CartResponseDto();
         cartResponseDto.setCartTotal(cart.getCartTotalPrice());
         cartResponseDto.setCartItems(cart.getCartItems());
-        cartResponseDto.setId(cart.getId());
+        cartResponseDto.setUuid(cart.getUuid());
         cartResponseDto.setEmail(cart.getEmail());
 
         return cartResponseDto;

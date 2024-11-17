@@ -1,5 +1,6 @@
 package com.example.cartcheckoutservice.services;
 
+import com.example.cartcheckoutservice.clients.KafkaProducerClient;
 import com.example.cartcheckoutservice.clients.ProductCatalogClient;
 import com.example.cartcheckoutservice.clients.UserAuthClient;
 import com.example.cartcheckoutservice.dtos.ProductCatalogClientResponseDto;
@@ -11,13 +12,17 @@ import com.example.cartcheckoutservice.exceptions.NoItemsInCartException;
 import com.example.cartcheckoutservice.models.Cart;
 import com.example.cartcheckoutservice.models.CartItem;
 import com.example.cartcheckoutservice.repositories.CartRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 public class CartService implements ICartService {
@@ -30,6 +35,17 @@ public class CartService implements ICartService {
 
     @Autowired
     ProductCatalogClient productCatalogClient;
+
+    @Autowired
+    RedisTemplate<String, Object> redisTemplate;
+
+    @Autowired
+    KafkaProducerClient kafkaProducerClient;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    private static final Logger logger = LoggerFactory.getLogger(CartService.class);
 
     @Transactional
     @Override
@@ -67,6 +83,32 @@ public class CartService implements ICartService {
         }
         cart.setEmail(email);
 
+
+        Date currentDate = new Date();
+        cart.setCreatedAt(currentDate);
+        cart.setUpdatedAt(currentDate);
+
+        cart.setUuid(UUID.randomUUID().toString());
+
+        redisTemplate.opsForHash().put("__Carts__", email, cart);
+        redisTemplate.opsForHash().put("__UUIDEmailIndex__", cart.getUuid(), email);
+
+        generatePersistCartEvent(cart);
+
+        return cart;
+    }
+
+    private void generatePersistCartEvent(Cart cart) {
+        String topic = "add-to-cart";
+        try {
+            kafkaProducerClient.sendMessage(topic, objectMapper.writeValueAsString(cart));
+            logger.info("Sent event for "+ cart + "to topic: " + topic);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e.getMessage());
+        }
+    }
+
+    public Cart persistCartData(Cart cart) {
         return cartRepository.save(cart);
     }
 
@@ -99,8 +141,22 @@ public class CartService implements ICartService {
 
     @Override
     public Cart getCart(String email, TokensDto tokensDto) {
-        Cart cart = cartRepository.findByEmail(email).orElseThrow(() ->
-                new NoItemsInCartException("No Items to retrieve from Cart"));
+
+        Cart cart = null;
+        cart = (Cart) redisTemplate.opsForHash().get("__Carts__", email);
+
+        if (cart == null) {
+            logger.info("No cart found for email: " + email + "in the cache");
+            System.out.println("Not found in Cache");
+//            Searching in database
+            cart = cartRepository.findByEmail(email).orElseThrow(() ->
+                    new NoItemsInCartException("No Items to retrieve from Cart"));
+
+            redisTemplate.opsForHash().put("__Carts__", email, cart);
+//            redisTemplate.opsForHash().put("__UUIDEmailIndex__", cart.getUuid(), email);
+        }
+
+        System.out.println(cart);
 
         return cart;
     }
