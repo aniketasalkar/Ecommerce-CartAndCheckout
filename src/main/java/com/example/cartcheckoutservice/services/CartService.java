@@ -50,11 +50,10 @@ public class CartService implements ICartService {
     @Transactional
     @Override
     public Cart addProduct(String email, Long productId, Integer quantity, double price, TokensDto tokensDto) {
-//        Boolean tokenStatus = userAuthClient.validateToken(email, tokensDto);
 
-//        if (!tokenStatus) {
-//            throw new InvalidSessionException("Invalid session. Login using credentials.");
-//        }
+        if (!validateTokens(email, tokensDto)) {
+            throw new InvalidSessionException("Invalid session. Login using credentials.");
+        }
 
         ProductCatalogClientResponseDto productCatalogClientResponseDto = productCatalogClient.getProduct(productId);
 
@@ -115,6 +114,10 @@ public class CartService implements ICartService {
     @Override
     public Cart removeProduct(String email, Long productId, Integer quantity, TokensDto tokensDto) {
 
+        if (!validateTokens(email, tokensDto)) {
+            throw new InvalidSessionException("Invalid session. Login using credentials.");
+        }
+
         ProductCatalogClientResponseDto productCatalogClientResponseDto = productCatalogClient.getProduct(productId);
         if (productCatalogClientResponseDto == null) {
             throw new InvalidProductException("Invalid product id.");
@@ -142,13 +145,18 @@ public class CartService implements ICartService {
     @Override
     public Cart getCart(String email, TokensDto tokensDto) {
 
+        if (!validateTokens(email, tokensDto)) {
+            throw new InvalidSessionException("Invalid session. Login using credentials.");
+        }
+
         Cart cart = null;
         cart = (Cart) redisTemplate.opsForHash().get("__Carts__", email);
 
         if (cart == null) {
             logger.info("No cart found for email: " + email + "in the cache");
             System.out.println("Not found in Cache");
-//            Searching in database
+
+            //Searching in database
             cart = cartRepository.findByEmail(email).orElseThrow(() ->
                     new NoItemsInCartException("No Items to retrieve from Cart"));
 
@@ -159,5 +167,12 @@ public class CartService implements ICartService {
         System.out.println(cart);
 
         return cart;
+    }
+
+    private Boolean validateTokens(String email, TokensDto tokensDto) {
+        logger.info("Access Token: " + tokensDto.getAccessToken());
+        logger.info("Refresh Token: " + tokensDto.getRefreshToken());
+
+        return userAuthClient.validateToken(email, tokensDto);
     }
 }

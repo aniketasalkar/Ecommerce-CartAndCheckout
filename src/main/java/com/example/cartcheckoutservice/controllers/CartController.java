@@ -27,8 +27,8 @@ public class CartController {
     public ResponseEntity<CartResponseDto> addToCart(@RequestBody CartRequestDto requestDto) {
         try {
             TokensDto tokensDto = new TokensDto();
-            tokensDto.setAccessToken(httpServletRequest.getHeaders(HttpHeaders.SET_COOKIE).toString());
-            tokensDto.setRefreshToken(httpServletRequest.getHeaders(HttpHeaders.SET_COOKIE2).toString());
+            tokensDto.setAccessToken(httpServletRequest.getHeader("Set-Cookie").toString());
+            tokensDto.setRefreshToken(httpServletRequest.getHeader("Set-Cookie2").toString());
             Cart cart = cartService.addProduct(requestDto.getEmail(), requestDto.getProductId(), requestDto.getQuantity(),
                     requestDto.getProductPrice(), tokensDto);
             CartResponseDto responseDto = fromCart(cart);
@@ -71,6 +71,12 @@ public class CartController {
         } catch (Exception exception) {
             throw exception;
         }
+    }
+
+    // To be Implemented
+    @GetMapping("/checkout/{email}")
+    public ResponseEntity<String> checkout(@PathVariable String email) {
+        return new ResponseEntity<>("In Progress", HttpStatus.OK);
     }
 
     private CartResponseDto fromCart(Cart cart) {
