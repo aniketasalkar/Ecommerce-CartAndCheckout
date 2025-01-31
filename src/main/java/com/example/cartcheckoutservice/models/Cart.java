@@ -12,4 +12,5 @@ public class Cart extends BaseModel implements Serializable {
     private String email;
     private List<CartItem> cartItems;
     private Double cartTotalPrice;
+    private Status status;
 }

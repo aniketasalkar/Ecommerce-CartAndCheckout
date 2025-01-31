@@ -1,10 +1,7 @@
 package com.example.cartcheckoutservice.services;
 
-import com.example.cartcheckoutservice.clients.KafkaProducerClient;
-import com.example.cartcheckoutservice.clients.ProductCatalogClient;
-import com.example.cartcheckoutservice.clients.UserAuthClient;
-import com.example.cartcheckoutservice.dtos.ProductCatalogClientResponseDto;
-import com.example.cartcheckoutservice.dtos.TokensDto;
+import com.example.cartcheckoutservice.clients.*;
+import com.example.cartcheckoutservice.dtos.*;
 import com.example.cartcheckoutservice.exceptions.BadRequestException;
 import com.example.cartcheckoutservice.exceptions.InvalidProductException;
 import com.example.cartcheckoutservice.exceptions.InvalidSessionException;
@@ -12,6 +9,7 @@ import com.example.cartcheckoutservice.exceptions.NoItemsInCartException;
 import com.example.cartcheckoutservice.models.Cart;
 import com.example.cartcheckoutservice.models.CartItem;
 import com.example.cartcheckoutservice.repositories.CartRepository;
+import com.example.cartcheckoutservice.utils.ValidateToken;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -37,6 +35,15 @@ public class CartService implements ICartService {
     ProductCatalogClient productCatalogClient;
 
     @Autowired
+    UserManagementClient userManagementClient;
+
+    @Autowired
+    OrderManagementClient orderManagementClient;
+
+    @Autowired
+    ValidateToken validateToken;
+
+    @Autowired
     RedisTemplate<String, Object> redisTemplate;
 
     @Autowired
@@ -51,9 +58,9 @@ public class CartService implements ICartService {
     @Override
     public Cart addProduct(String email, Long productId, Integer quantity, double price, TokensDto tokensDto) {
 
-        if (!validateTokens(email, tokensDto)) {
-            throw new InvalidSessionException("Invalid session. Login using credentials.");
-        }
+//        if (!validateToken.validateTokens(email, tokensDto)) {
+//            throw new InvalidSessionException("Invalid session. Login using credentials.");
+//        }
 
         ProductCatalogClientResponseDto productCatalogClientResponseDto = productCatalogClient.getProduct(productId);
 
@@ -61,6 +68,7 @@ public class CartService implements ICartService {
             throw new InvalidProductException("Invalid product id.");
         }
 
+        boolean existInCart = false;
         Cart cart = cartRepository.findByEmail(email).orElse(new Cart());
         if (cart.getCartItems() == null || cart.getCartItems().isEmpty()) {
             CartItem cartItem = new CartItem();
@@ -77,11 +85,21 @@ public class CartService implements ICartService {
                 if (cartItem.getProductId().equals(productId)) {
                     cartItem.setQuantity(cartItem.getQuantity() + quantity);
                     cart.setCartTotalPrice(cart.getCartTotalPrice() + quantity * price);
+                    existInCart = true;
+                    break;
                 }
+            }
+
+            if (!existInCart) {
+                CartItem cartItem = new CartItem();
+                cartItem.setProductId(productId);
+                cartItem.setQuantity(quantity);
+                cartItem.setPrice(price);
+                cart.getCartItems().add(cartItem);
+                cart.setCartTotalPrice(cart.getCartTotalPrice() + quantity * price);
             }
         }
         cart.setEmail(email);
-
 
         Date currentDate = new Date();
         cart.setCreatedAt(currentDate);
@@ -114,9 +132,9 @@ public class CartService implements ICartService {
     @Override
     public Cart removeProduct(String email, Long productId, Integer quantity, TokensDto tokensDto) {
 
-        if (!validateTokens(email, tokensDto)) {
-            throw new InvalidSessionException("Invalid session. Login using credentials.");
-        }
+//        if (!validateToken.validateTokens(email, tokensDto)) {
+//            throw new InvalidSessionException("Invalid session. Login using credentials.");
+//        }
 
         ProductCatalogClientResponseDto productCatalogClientResponseDto = productCatalogClient.getProduct(productId);
         if (productCatalogClientResponseDto == null) {
@@ -145,9 +163,9 @@ public class CartService implements ICartService {
     @Override
     public Cart getCart(String email, TokensDto tokensDto) {
 
-        if (!validateTokens(email, tokensDto)) {
-            throw new InvalidSessionException("Invalid session. Login using credentials.");
-        }
+//        if (!validateToken.validateTokens(email, tokensDto)) {
+//            throw new InvalidSessionException("Invalid session. Login using credentials.");
+//        }
 
         Cart cart = null;
         cart = (Cart) redisTemplate.opsForHash().get("__Carts__", email);
@@ -169,10 +187,62 @@ public class CartService implements ICartService {
         return cart;
     }
 
-    private Boolean validateTokens(String email, TokensDto tokensDto) {
-        logger.info("Access Token: " + tokensDto.getAccessToken());
-        logger.info("Refresh Token: " + tokensDto.getRefreshToken());
+    @Override
+    public OrderResponsePaymentLinkDto checkOutCart(String email, PaymentMethod paymentMethod, TokensDto tokensDto) {
 
-        return userAuthClient.validateToken(email, tokensDto);
+//        if (!validateToken.validateTokens(email, tokensDto)) {
+//            throw new InvalidSessionException("Invalid session. Login using credentials.");
+//        }
+        UserResponseDto userResponseDto = userManagementClient.getUser(email).getBody();
+        Cart cart = getCart(email, tokensDto);
+        OrderRequestDto orderRequestDto = new OrderRequestDto();
+
+        orderRequestDto.setUserId(userResponseDto.getId());
+        orderRequestDto.setTotalAmount(cart.getCartTotalPrice());
+
+        orderRequestDto.setOrderItems(getOrderItems(cart));
+        orderRequestDto.setDeliverySnapshot(getDeliverySnapshot(userResponseDto));
+
+        Calendar calendar = Calendar.getInstance();
+        calendar.add(Calendar.DATE, 5);
+        orderRequestDto.setExpectedDeliveryDate(calendar.getTime());
+        orderRequestDto.setPaymentMethod(paymentMethod.toString());
+
+        return orderManagementClient.createOrder(orderRequestDto).getBody();
+    }
+
+    private DeliverySnapshot getDeliverySnapshot(UserResponseDto userResponseDto) {
+        AddressDto addressDto = userManagementClient.getDefaultAddress(userResponseDto.getId()).getBody();
+        DeliverySnapshot deliverySnapshot = new DeliverySnapshot();
+        deliverySnapshot.setName(addressDto.getName());
+        deliverySnapshot.setStreet(addressDto.getStreet());
+        deliverySnapshot.setCity(addressDto.getCity());
+        deliverySnapshot.setState(addressDto.getState());
+        deliverySnapshot.setZip(addressDto.getZip());
+        deliverySnapshot.setPhone(userResponseDto.getPhoneNumber());
+
+        return deliverySnapshot;
+    }
+
+    private List<OrderItemDto> getOrderItems(Cart cart) {
+        List<OrderItemDto> orderItemDtos = new ArrayList<>();
+        for (CartItem cartItem : cart.getCartItems()) {
+            OrderItemDto orderItemDto = new OrderItemDto();
+            orderItemDto.setProductId(cartItem.getProductId());
+            orderItemDto.setQuantity(cartItem.getQuantity());
+            orderItemDto.setPrice(cartItem.getPrice());
+
+            ProductCatalogClientResponseDto productCatalogClientResponseDto = productCatalogClient.getProduct(cartItem.getProductId());
+            ProductSnapshot productSnapshot = new ProductSnapshot();
+            productSnapshot.setProductName(productCatalogClientResponseDto.getName());
+            productSnapshot.setDescription(productCatalogClientResponseDto.getDescription());
+            productSnapshot.setPrice(productCatalogClientResponseDto.getPrice());
+            productSnapshot.setImageUrl(productSnapshot.getImageUrl());
+
+            orderItemDto.setProductSnapshot(productSnapshot);
+            orderItemDtos.add(orderItemDto);
+        }
+
+        return orderItemDtos;
     }
 }
